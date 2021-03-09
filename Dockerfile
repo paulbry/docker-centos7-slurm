@@ -63,7 +63,7 @@ RUN set -ex \
     && rm -f /tmp/install-python.sh
 
 # Compile, build and install Slurm from Git source
-ARG SLURM_TAG=slurm-19-05-4-1
+ARG SLURM_TAG=slurm-20-11-3-1
 RUN set -ex \
     && git clone https://github.com/SchedMD/slurm.git \
     && pushd slurm \
@@ -109,6 +109,11 @@ COPY files/slurm/slurm.conf /etc/slurm/slurm.conf
 COPY files/slurm/gres.conf /etc/slurm/gres.conf
 COPY files/slurm/slurmdbd.conf /etc/slurm/slurmdbd.conf
 COPY files/supervisord.conf /etc/
+
+# Correct file permissions to conform to Slurm expectations
+RUN chown slurm:slurm -R /etc/slurm  \
+    && chmod 600 /etc/slurm/slurmdbd.conf \
+    && chmod 644 /etc/slurm/slurm.conf
 
 # Mark externally mounted volumes
 VOLUME ["/var/lib/mysql", "/var/lib/slurmd", "/var/spool/slurmd", "/var/log/slurm"]
