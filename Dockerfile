@@ -15,9 +15,11 @@ RUN set -ex \
     && yum -y install epel-release \
     && yum -y install \
         autoconf \
+        automake \
         bash-completion \
         bzip2 \
         bzip2-devel \
+        cmake3 \
         file \
         iproute \
         gcc \
@@ -26,8 +28,11 @@ RUN set -ex \
         git \
         glibc-devel \
         gmp-devel \
+        jansson-devel \
         libffi-devel \
         libGL-devel \
+        libtool \
+        libyaml-devel \
         libX11-devel \
         make \
         mariadb-server \
@@ -62,22 +67,49 @@ RUN set -ex \
     && for version in ${PYTHON_VERSIONS}; do /tmp/install-python.sh "$version"; done \
     && rm -f /tmp/install-python.sh
 
-# Compile, build and install Slurm from Git source
-ARG SLURM_TAG=slurm-20-11-3-1
+# Build/install missing slurmrstd requirements
 RUN set -ex \
+    && git clone --depth 1 --single-branch -b v2.9.4 https://github.com/nodejs/http-parser.git http_parser \
+    && pushd http_parser \
+    && make \
+    && make install \
+    && popd \
+    && rm -rf http_parser \
+    && git clone --depth 1 --single-branch -b v1.12.0 https://github.com/benmcollins/libjwt.git libjwt \
+    && pushd libjwt \
+    && autoreconf --force --install \
+    && ./configure --prefix=/usr/local \
+    && make -j \
+    && make install \
+    && popd \
+    && rm -rf libjwt \
+    && git clone --depth 1 --single-branch -b json-c-0.15-20200726 https://github.com/json-c/json-c.git json-c \
+    && pushd json-c \
+    && cmake3 . \
+    && make \
+    && make install \
+    && popd \
+    && rm -rf json-c
+
+ENV LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/local/lib:/usr/local/lib64
+
+# Compile, build and install Slurm from Git source
+ARG SLURM_TAG=slurm-20-11-8-1
+RUN set -ex \
+    && export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig/:$PKG_CONFIG_PATH \
     && git clone https://github.com/SchedMD/slurm.git \
     && pushd slurm \
     && git checkout tags/$SLURM_TAG \
     && ./configure --enable-debug --enable-front-end --prefix=/usr \
        --sysconfdir=/etc/slurm --with-mysql_config=/usr/bin \
-       --libdir=/usr/lib64 \
+       --libdir=/usr/lib64 --with-yaml=/usr/lib64 --with-jwt=/usr/local/ \
+       --with-http-parser=/usr/local/ \
     && make install \
     && install -D -m644 etc/cgroup.conf.example /etc/slurm/cgroup.conf.example \
     && install -D -m644 etc/slurm.conf.example /etc/slurm/slurm.conf.example \
     && install -D -m644 etc/slurmdbd.conf.example /etc/slurm/slurmdbd.conf.example \
     && install -D -m644 contribs/slurm_completion_help/slurm_completion.sh /etc/profile.d/slurm_completion.sh \
     && popd \
-    && rm -rf slurm \
     && groupadd -r slurm  \
     && useradd -r -g slurm slurm \
     && mkdir /etc/sysconfig/slurm \
@@ -109,6 +141,16 @@ COPY files/slurm/slurm.conf /etc/slurm/slurm.conf
 COPY files/slurm/gres.conf /etc/slurm/gres.conf
 COPY files/slurm/slurmdbd.conf /etc/slurm/slurmdbd.conf
 COPY files/supervisord.conf /etc/
+
+# Setup slurmrest
+RUN set -ex \
+    && echo "include /etc/slurm/slurm.conf" >> /etc/slurm/slurmrestd.conf \
+    && echo "AuthType=auth/jwt" >> /etc/slurm/slurmrestd.conf \
+    && echo "AuthAltParameters=jwt_key=/etc/slurm/jwt.key" >> /etc/slurm/slurmrestd.conf \
+    && echo "AuthAltTypes=auth/jwt" >> /etc/slurm/slurm.conf \
+    && echo "AuthAltParameters=jwt_key=/etc/slurm/jwt.key" >> /etc/slurm/slurm.conf \
+    && dd if=/dev/random of=/etc/slurm/jwt.key bs=32 count=1
+
 
 # Correct file permissions to conform to Slurm expectations
 RUN chown slurm:slurm -R /etc/slurm  \
